@@ -48,7 +48,7 @@ This gives you both `uv` and `uvx` commands.
 
 ```bash
 # Test it works - preview your Makefile targets
-uvx --from git+https://github.com/ccollicutt/mcp-makefile-server mcp-makefile preview ./Makefile
+uvx --from git+https://github.com/ccollicutt/mcp-makefile-server mcp-makefile-server preview ./Makefile
 ```
 
 **What this does:**
@@ -107,7 +107,7 @@ claude mcp add-json --scope project makefile-server '{
   "args": [
     "--from",
     "git+https://github.com/ccollicutt/mcp-makefile-server",
-    "mcp-makefile",
+    "mcp-makefile-server",
     "./Makefile"
   ]
 }'
@@ -139,9 +139,54 @@ claude mcp add-json --scope project makefile-server '{
 
 **Next step:** Restart Claude Code to load the server.
 
-### Configuration
+### Advanced Configuration
 
-The server can be configured via **environment variables** (useful for deployment):
+#### Allowed Targets Filter
+
+Restrict which targets can be executed:
+
+**Using uvx:**
+```bash
+claude mcp add-json --scope project makefile-server '{
+  "type": "stdio",
+  "command": "uvx",
+  "args": [
+    "--from",
+    "git+https://github.com/ccollicutt/mcp-makefile-server",
+    "mcp-makefile-server",
+    "./Makefile",
+    "--allowed-targets",
+    "test",
+    "build",
+    "lint"
+  ]
+}'
+```
+
+**Using local installation:**
+```bash
+claude mcp add-json --scope project makefile-server '{
+  "type": "stdio",
+  "command": "uv",
+  "args": [
+    "--directory",
+    "/path/to/mcp-makefile-server",
+    "run",
+    "python",
+    "-m",
+    "mcp_makefile",
+    "./Makefile",
+    "--allowed-targets",
+    "test",
+    "build",
+    "lint"
+  ]
+}'
+```
+
+#### Environment Variables
+
+The server can also be configured via environment variables:
 
 | Environment Variable | Description | Default |
 |---------------------|-------------|---------|
@@ -149,38 +194,52 @@ The server can be configured via **environment variables** (useful for deploymen
 | `MCP_MAKEFILE_LOG_LEVEL` | Logging level (DEBUG, INFO, WARNING, ERROR) | `INFO` |
 | `MCP_MAKEFILE_ALLOWED_TARGETS` | Comma-separated list of allowed targets | All non-internal targets |
 
-**Example with environment variables:**
+**Example:**
 ```bash
 export MCP_MAKEFILE_PATH=/path/to/Makefile
 export MCP_MAKEFILE_LOG_LEVEL=DEBUG
-export MCP_MAKEFILE_ALLOWED_TARGETS="test-unit,test-integration,build"
-
-# Then in your MCP config, just run the server
-uv --directory /path/to/mcp-makefile-server run python -m mcp_makefile
+export MCP_MAKEFILE_ALLOWED_TARGETS="test,build,lint"
 ```
 
-**With allowed targets filter:**
+---
+
+### Removing and Uninstalling
+
+#### Remove from Claude Code
+
+To remove the MCP server from your project:
 
 ```bash
-claude mcp add-json --scope project makefile-server '{
-  "type": "stdio",
-  "command": "uv",
-  "args": [
-    "--directory",
-    "/home/user/working/mcp-makefile-server",
-    "run",
-    "python",
-    "-m",
-    "mcp_makefile",
-    "/home/user/projects/my-app/Makefile",
-    "--allowed-targets",
-    "test-unit",
-    "test-integration",
-    "build",
-    "lint"
-  ]
-}'
+cd ~/projects/my-app
+claude mcp remove "makefile-server" -s project
 ```
+
+This removes the server from `.mcp.json`. Restart Claude Code to apply changes.
+
+#### Uninstall the Server
+
+**If you used Method 1 (uvx):**
+
+The server is cached automatically. To clear it:
+```bash
+# Clear specific package from cache
+uv cache clean mcp-makefile-server
+
+# Or clear entire uv cache
+uv cache clean
+```
+
+**If you used Method 2 (local installation):**
+
+```bash
+# Uninstall the package
+uv pip uninstall mcp-makefile-server
+
+# Optionally, remove the cloned directory
+rm -rf /path/to/mcp-makefile-server
+```
+
+---
 
 ### Makefile Format
 
