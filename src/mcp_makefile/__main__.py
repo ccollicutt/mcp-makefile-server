@@ -93,6 +93,24 @@ def cmd_serve(args):
     if not allowed_targets and os.getenv("MCP_MAKEFILE_ALLOWED_TARGETS"):
         allowed_targets = [t.strip() for t in os.getenv("MCP_MAKEFILE_ALLOWED_TARGETS", "").split(",") if t.strip()]
 
+    # Max output chars from env or args
+    max_output_chars = args.max_output_chars
+    if os.getenv("MCP_MAKEFILE_MAX_OUTPUT_CHARS"):
+        try:
+            max_output_chars = int(os.getenv("MCP_MAKEFILE_MAX_OUTPUT_CHARS", "0"))
+        except ValueError:
+            print("Warning: Invalid MCP_MAKEFILE_MAX_OUTPUT_CHARS, using default 0 (unlimited)", file=sys.stderr)
+
+    # Write to file from env or args
+    write_to_file = args.write_to_file
+    if not write_to_file and os.getenv("MCP_MAKEFILE_WRITE_TO_FILE"):
+        write_to_file = os.getenv("MCP_MAKEFILE_WRITE_TO_FILE", "").lower() in ("true", "1", "yes")
+
+    # Temp directory from env or args
+    temp_dir = args.temp_dir
+    if os.getenv("MCP_MAKEFILE_TEMP_DIR"):
+        temp_dir = os.getenv("MCP_MAKEFILE_TEMP_DIR", "/tmp")  # nosec B108 - Standard default, configurable
+
     # Setup logging
     setup_logging(log_level)
 
@@ -105,6 +123,9 @@ def cmd_serve(args):
     server = MakefileMCPServer(
         makefile_path=makefile_path,
         allowed_targets=allowed_targets,
+        max_output_chars=max_output_chars,
+        write_to_file=write_to_file,
+        temp_dir=temp_dir,
     )
 
     asyncio.run(server.run())
@@ -184,6 +205,23 @@ Examples:
         "--allowed-targets",
         nargs="+",
         help="Allowlist of allowed targets (default: all non-internal targets)",
+    )
+    serve_parser.add_argument(
+        "--max-output-chars",
+        type=int,
+        default=0,
+        help="Maximum characters to return from target output (default: 0 = unlimited, set >0 to truncate)",
+    )
+    serve_parser.add_argument(
+        "--write-to-file",
+        action="store_true",
+        help="Write full output to temporary files (default: False)",
+    )
+    serve_parser.add_argument(
+        "--temp-dir",
+        type=str,
+        default="/tmp",  # nosec B108 - Standard default, configurable by user
+        help="Base directory for temporary files (default: /tmp)",
     )
     serve_parser.set_defaults(func=cmd_serve)
 

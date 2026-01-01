@@ -1,5 +1,6 @@
 """Tests for MCP server."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -303,3 +304,140 @@ class TestMakefileMCPServer:
 
         assert "Allowed targets:" in result[0].text
         assert "test" in result[0].text
+
+    @pytest.mark.anyio
+    async def test_output_truncation_when_exceeds_limit(self) -> None:
+        """Output is truncated when it exceeds max_output_chars."""
+        makefile = FIXTURES_DIR / "simple.mk"
+        # Create executor with large mock output
+        large_output = "x" * 20000  # 20,000 characters
+        executor = DryRunMakeExecutor(mock_success=True, mock_output=large_output)
+        server = MakefileMCPServer(makefile, executor=executor, max_output_chars=10000)
+        await server.initialize()
+
+        result = await server._handle_call_tool("test", {})
+
+        assert len(result) == 1
+        # Output should be truncated
+        assert "truncated" in result[0].text.lower()
+        assert "Note: Output exceeded 10000 characters" in result[0].text
+        # Should suggest logging to files
+        assert "log verbose output to files" in result[0].text
+
+    @pytest.mark.anyio
+    async def test_no_truncation_when_unlimited(self) -> None:
+        """Output is not truncated when max_output_chars is 0 (unlimited)."""
+        makefile = FIXTURES_DIR / "simple.mk"
+        # Create executor with large mock output
+        large_output = "x" * 20000  # 20,000 characters
+        executor = DryRunMakeExecutor(mock_success=True, mock_output=large_output)
+        server = MakefileMCPServer(makefile, executor=executor, max_output_chars=0)
+        await server.initialize()
+
+        result = await server._handle_call_tool("test", {})
+
+        assert len(result) == 1
+        # Output should NOT be truncated
+        assert "truncated" not in result[0].text.lower()
+        # Should contain all output
+        assert "x" * 20000 in result[0].text
+
+    @pytest.mark.anyio
+    async def test_no_truncation_when_under_limit(self) -> None:
+        """Output is not truncated when under max_output_chars."""
+        makefile = FIXTURES_DIR / "simple.mk"
+        # Create executor with small output
+        small_output = "Test output"
+        executor = DryRunMakeExecutor(mock_success=True, mock_output=small_output)
+        server = MakefileMCPServer(makefile, executor=executor, max_output_chars=10000)
+        await server.initialize()
+
+        result = await server._handle_call_tool("test", {})
+
+        assert len(result) == 1
+        # Output should NOT be truncated
+        assert "truncated" not in result[0].text.lower()
+        assert "Test output" in result[0].text
+
+    @pytest.mark.anyio
+    async def test_write_to_file_creates_temp_file(self) -> None:
+        """When write_to_file is enabled, output is written to temp file in subdirectory."""
+        makefile = FIXTURES_DIR / "simple.mk"
+        test_output = "Test output from target"
+        executor = DryRunMakeExecutor(mock_success=True, mock_output=test_output)
+        server = MakefileMCPServer(makefile, executor=executor, write_to_file=True)
+        await server.initialize()
+
+        result = await server._handle_call_tool("test", {})
+
+        assert len(result) == 1
+        # Should mention file path
+        assert "Full output written to:" in result[0].text
+        assert "/tmp/mcp-makefile-" in result[0].text
+        assert "/test-" in result[0].text
+        assert ".log" in result[0].text
+
+        # Extract file path from response
+        lines = result[0].text.split("\n")
+        file_line = [line for line in lines if "Full output written to:" in line][0]
+        file_path = file_line.split("Full output written to:")[1].strip()
+
+        # Verify file exists
+        assert os.path.exists(file_path)
+
+        # Verify file contains output
+        with open(file_path) as f:
+            content = f.read()
+            assert "Test output from target" in content
+            assert "Target: test" in content
+            assert "Exit Code: 0" in content
+
+        # Cleanup file and directory
+        os.unlink(file_path)
+        output_dir = Path(file_path).parent
+        output_dir.rmdir()
+
+    @pytest.mark.anyio
+    async def test_write_to_file_disabled_by_default(self) -> None:
+        """When write_to_file is False, no file is created."""
+        makefile = FIXTURES_DIR / "simple.mk"
+        executor = DryRunMakeExecutor(mock_success=True, mock_output="Test output")
+        server = MakefileMCPServer(makefile, executor=executor, write_to_file=False)
+        await server.initialize()
+
+        result = await server._handle_call_tool("test", {})
+
+        assert len(result) == 1
+        # Should NOT mention file path
+        assert "Full output written to:" not in result[0].text
+
+    @pytest.mark.anyio
+    async def test_write_to_file_with_truncation(self) -> None:
+        """write_to_file and truncation can be used together."""
+        makefile = FIXTURES_DIR / "simple.mk"
+        large_output = "x" * 20000  # 20,000 characters
+        executor = DryRunMakeExecutor(mock_success=True, mock_output=large_output)
+        server = MakefileMCPServer(makefile, executor=executor, max_output_chars=5000, write_to_file=True)
+        await server.initialize()
+
+        result = await server._handle_call_tool("test", {})
+
+        assert len(result) == 1
+        # Should have both file path and truncation notice
+        assert "Full output written to:" in result[0].text
+        assert "truncated" in result[0].text.lower()
+
+        # Extract and verify file has full output
+        lines = result[0].text.split("\n")
+        file_line = [line for line in lines if "Full output written to:" in line][0]
+        file_path = file_line.split("Full output written to:")[1].strip()
+
+        with open(file_path) as f:
+            content = f.read()
+            # File should have full output
+            assert "x" * 20000 in content
+
+        # Cleanup file and directory
+        os.unlink(file_path)
+        output_dir = Path(file_path).parent
+        output_dir.rmdir()

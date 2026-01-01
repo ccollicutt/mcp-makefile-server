@@ -104,8 +104,13 @@ class RegexMakefileParser(MakefileParser):
                 deps_str = target_match.group(2).strip()
                 description = target_match.group(3).strip()
 
-                # Check for @internal or @skip tags
-                is_internal = description.startswith("@internal ") or description.startswith("@skip ")
+                # Check for @internal or @skip tags (with or without description)
+                is_internal = (
+                    description.startswith("@internal ")
+                    or description.startswith("@skip ")
+                    or description == "@internal"
+                    or description == "@skip"
+                )
 
                 # Remove tag from description if present
                 if is_internal:

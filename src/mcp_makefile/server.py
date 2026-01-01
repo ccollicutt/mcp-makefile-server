@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import sys
+import time as time_module
 import uuid
 from pathlib import Path
 
@@ -35,11 +36,18 @@ class MakefileMCPServer:
         parser: MakefileParser | None = None,
         executor: MakeExecutor | None = None,
         allowed_targets: list[str] | None = None,
+        max_output_chars: int = 0,
+        write_to_file: bool = False,
+        temp_dir: str = "/tmp",  # nosec B108 - Standard default, configurable by user
     ):
         self.makefile_path = makefile_path
         self.parser = parser or RegexMakefileParser()
         self.executor = executor or SubprocessMakeExecutor()
         self.allowed_targets = set(allowed_targets) if allowed_targets else None
+        self.max_output_chars = max_output_chars
+        self.write_to_file = write_to_file
+        self.temp_dir = temp_dir
+        self.output_dir: Path | None = None  # Will be created on first use
         self.metadata: MakefileMetadata | None = None
         self.server = Server("mcp-makefile-server")
 
@@ -96,6 +104,16 @@ class MakefileMCPServer:
                     f"Filter: {', '.join(sorted(self.allowed_targets))} "
                     f"Exposed: {', '.join(sorted(exposed_targets.keys()))}"
                 )
+
+    def _ensure_output_directory(self) -> Path:
+        """Ensure output directory exists, creating it if needed."""
+        if self.output_dir is None:
+            # Create a randomized subdirectory within temp_dir
+            random_suffix = uuid.uuid4().hex[:8]
+            self.output_dir = Path(self.temp_dir) / f"mcp-makefile-{random_suffix}"
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"Created output directory: {self.output_dir}")
+        return self.output_dir
 
     async def _handle_list_tools(self) -> list[Tool]:
         """Return all Makefile targets as MCP tools."""
@@ -291,10 +309,65 @@ class MakefileMCPServer:
         output += f"Exit Code: {result.exit_code}\n"
         output += f"Duration: {result.duration:.2f}s\n\n"
 
-        if result.stdout:
-            output += "STDOUT:\n" + result.stdout + "\n"
-        if result.stderr:
-            output += "STDERR:\n" + result.stderr + "\n"
+        # Write to file if enabled
+        if self.write_to_file:
+            # Ensure output directory exists
+            output_dir = self._ensure_output_directory()
+
+            # Create filename with timestamp
+            timestamp = int(time_module.time())
+            output_file = output_dir / f"{target_name}-{timestamp}.log"
+
+            # Write output to file
+            with open(output_file, "w") as f:
+                f.write(f"Target: {target_name}\n")
+                f.write(f"Exit Code: {result.exit_code}\n")
+                f.write(f"Duration: {result.duration:.2f}s\n")
+                f.write(f"Timestamp: {timestamp}\n\n")
+                if result.stdout:
+                    f.write("STDOUT:\n")
+                    f.write(result.stdout)
+                    f.write("\n\n")
+                if result.stderr:
+                    f.write("STDERR:\n")
+                    f.write(result.stderr)
+                    f.write("\n")
+
+            output += f"Full output written to: {output_file}\n\n"
+            logger.info(f"Wrote full output to {output_file}")
+
+        # Truncate output if needed to avoid token overload
+        stdout_text = result.stdout or ""
+        stderr_text = result.stderr or ""
+
+        total_output_len = len(stdout_text) + len(stderr_text)
+        if self.max_output_chars > 0 and total_output_len > self.max_output_chars:
+            # Calculate how much to show from each stream
+            truncate_at = self.max_output_chars // 2
+
+            if stdout_text:
+                if len(stdout_text) > truncate_at:
+                    stdout_text = (
+                        stdout_text[:truncate_at]
+                        + f"\n\n... (truncated, {len(result.stdout) - truncate_at} chars omitted)"
+                    )
+                output += "STDOUT:\n" + stdout_text + "\n"
+
+            if stderr_text:
+                if len(stderr_text) > truncate_at:
+                    stderr_text = (
+                        stderr_text[:truncate_at]
+                        + f"\n\n... (truncated, {len(result.stderr) - truncate_at} chars omitted)"
+                    )
+                output += "STDERR:\n" + stderr_text + "\n"
+
+            output += f"\nNote: Output exceeded {self.max_output_chars} characters and was truncated. "
+            output += "Configure targets to log verbose output to files and return summaries instead.\n"
+        else:
+            if stdout_text:
+                output += "STDOUT:\n" + stdout_text + "\n"
+            if stderr_text:
+                output += "STDERR:\n" + stderr_text + "\n"
 
         return [TextContent(type="text", text=output)]
 

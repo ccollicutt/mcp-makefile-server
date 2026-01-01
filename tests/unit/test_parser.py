@@ -95,6 +95,39 @@ class TestRegexMakefileParser:
         assert cleanup_target.description == "Clean production database"
         assert "@skip" not in cleanup_target.description
 
+    def test_parse_internal_tag_without_description(self) -> None:
+        """Parse targets with @internal or @skip tag but no description."""
+        parser = RegexMakefileParser()
+        content = """
+.PHONY: helper1 helper2
+
+helper1: ## @internal
+\techo "Internal helper 1"
+
+helper2: ## @skip
+\techo "Internal helper 2"
+"""
+        metadata = parser.parse_string(content, Path("Test.mk"))
+
+        # Both should be marked as internal
+        assert "helper1" in metadata.targets
+        assert metadata.targets["helper1"].is_internal is True
+        assert metadata.targets["helper1"].description == ""
+
+        assert "helper2" in metadata.targets
+        assert metadata.targets["helper2"].is_internal is True
+        assert metadata.targets["helper2"].description == ""
+
+        # Neither should be in exposed targets
+        exposed = metadata.get_exposed_targets()
+        assert "helper1" not in exposed
+        assert "helper2" not in exposed
+
+        # Both should be in internal targets
+        internal = metadata.get_internal_targets()
+        assert "helper1" in internal
+        assert "helper2" in internal
+
     def test_ignore_undocumented_targets(self) -> None:
         """Ignore targets without ## descriptions."""
         parser = RegexMakefileParser()
